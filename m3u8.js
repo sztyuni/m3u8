@@ -108,7 +108,7 @@ function M3U8() {
                     recur = new RecurseDownload(mapped, function(data) {
 
                         var blob = new Blob(data, {
-                            type: "octet/stream"
+                            type: "video/mp4"
                         });
 
                         handleCb("progress", {
@@ -170,11 +170,12 @@ function M3U8() {
         this.aborted = false;
         
         const { decrypt } = options;
+        const symReqs = 5;
 
         recurseDownload(arr, cb, i, data);
 
         function recurseDownload(arr, cb, i, data) {
-            var req = Promise.all([fetch(arr[i]), arr[i + 1] ? fetch(arr[i + 1]) : Promise.resolve()]) // HTTP protocol dictates only TWO requests can be simultaneously performed
+            var req = Promise.all(arr.slice(i, i + symReqs).map(e => fetch(e))) // HTTP protocol dictates only TWO requests can be simultaneously performed
                 .then(function(d) {
                     return map(filter(d, function(v) {
                         return v && v.blob;
@@ -220,15 +221,15 @@ function M3U8() {
                                 if (d[n] instanceof ArrayBuffer) d[n] = new Uint8Array(d[n]);
                                 const aesCbc = new aesjs.ModeOfOperation.cbc(decrypt.key, decrypt.iv);
                                 const decryptedBytes = aesCbc.decrypt(d[n]);
-                                const decryptedText = aesjs.utils.utf8.fromBytes(decryptedBytes);
-                                data.push(decryptedText);
+                                //const decryptedText = aesjs.utils.utf8.fromBytes(decryptedBytes);
+                                data.push(decryptedBytes);
                             }
                             else {
                                 data.push(d[n]);
                             }
                         }
 
-                        var increment = arr[i + 2] ? 2 : 1; // look ahead to see if we can perform 2 requests at the same time again
+                        var increment = Math.min(i + symReqs, arr.length) - i; // look ahead to see if we can perform 2 requests at the same time again
 
                         if (_this.aborted) {
                             data = null; // purge data... client side calling of garbage collector isn't possible. I know about opera and ie's garbage collectors but they're not ideal.

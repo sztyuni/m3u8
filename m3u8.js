@@ -9,6 +9,11 @@ function M3U8() {
 
         if (!options)
             options = {};
+        
+        const decrypt = {
+          key: null,
+          iv: null
+        };
 
         var callbacks = {
             progress: null,
@@ -66,7 +71,24 @@ function M3U8() {
                     return d.text();
                 })
                 .then(function(d) {
-
+                    if (options.isEncrypted) {
+                        const [ keyFile, ivHex ] = d.match(/#EXT-X-KEY:METHOD=AES-128,URI="(.*)",IV=(.*)\n/).slice(1);
+                        
+                        decrypt.iv = ivHex.replace(/^0x/, '').match(/.{2}/g).map(b => parseInt(b, 16));
+                        
+                        return fetch(keyFile)
+                            .then(r => r.blob())
+                            .then(b => b.arrayBuffer())
+                            .then(ab => new Uint8Array(ab))
+                            .then(ia => Array.from(ia))
+                            .then(a => decrypt.key = a)
+                            .then(() => d);
+                    }
+                    
+                    return d;
+                })
+                .then(function(d) {
+                    
                     var filtered = filter(d.split(/(\r\n|\r|\n)/gi), function(item) {
                         return item.indexOf(".ts") > -1; // select only ts files
                     });
@@ -126,7 +148,7 @@ function M3U8() {
                         }
 
 
-                    }, 0, []);
+                    }, 0, [], { decrypt: !!options.isEncrypted && decrypt });
 
                     recur.onprogress = function(obj) {
                         handleCb("progress", obj);
@@ -142,10 +164,12 @@ function M3U8() {
 
     }
 
-    function RecurseDownload(arr, cb, i, data) { // recursively download asynchronously 2 at the time
+    function RecurseDownload(arr, cb, i, data, options) { // recursively download asynchronously 2 at the time
         var _this = this;
 
         this.aborted = false;
+        
+        const { decrypt } = options;
 
         recurseDownload(arr, cb, i, data);
 
@@ -191,7 +215,17 @@ function M3U8() {
 
                     Promise.all(blobs).then(function(d) {
                         for (var n = 0; n < d.length; n++) { // polymorphism
-                            data.push(d[n]);
+                            if (decrypt) {
+                                if (!aesjs) throw new Error('Missing dependency: aesjs');
+                                if (d[n] instanceof ArrayBuffer) d[n] = new Uint8Array(d[n]);
+                                const aesCbc = new aesjs.ModeOfOperation.cbc(decrypt.key, decrypt.iv);
+                                const decryptedBytes = aesCbc.decrypt(d[n]);
+                                const decryptedText = aesjs.utils.utf8.fromBytes(decryptedBytes);
+                                data.push(decryptedText);
+                            }
+                            else {
+                                data.push(d[n]);
+                            }
                         }
 
                         var increment = arr[i + 2] ? 2 : 1; // look ahead to see if we can perform 2 requests at the same time again
